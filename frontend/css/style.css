@@ -1,0 +1,172 @@
+/* Custom styles for AI-Based Loan Approval Bayesian Network */
+
+:root {
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --secondary: #0ea5e9;
+    --accent: #8b5cf6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --surface-dark: #0f172a;
+    --card-dark: #1e293b;
+    --border-dark: #334155;
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #0b0f19;
+    color: #f1f5f9;
+}
+
+/* Glassmorphism cards */
+.glass-panel {
+    background: rgba(30, 41, 59, 0.75);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* Radial Gauge Animations */
+.circular-chart {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    max-height: 220px;
+}
+
+.circle-bg {
+    fill: none;
+    stroke: #1e293b;
+    stroke-width: 3.5;
+}
+
+.circle {
+    fill: none;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    transition: stroke-dasharray 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.circle.approval-stroke {
+    stroke: url(#approvalGradient);
+}
+
+.circle.rejection-stroke {
+    stroke: url(#rejectionGradient);
+}
+
+.percentage {
+    fill: #f8fafc;
+    font-size: 0.52em;
+    font-weight: 700;
+    text-anchor: middle;
+}
+
+.gauge-label {
+    fill: #94a3b8;
+    font-size: 0.22em;
+    text-anchor: middle;
+}
+
+/* Network Graph Container */
+#network-container {
+    width: 100%;
+    height: 540px;
+    background: radial-gradient(circle at 50% 50%, #17223b 0%, #0b0f19 100%);
+    border-radius: 12px;
+    border: 1px solid #1e293b;
+}
+
+/* Pulse animation for AI Run button */
+@keyframes aiGlow {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(37, 99, 235, 0.5), 0 0 30px rgba(139, 92, 246, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(37, 99, 235, 0.8), 0 0 45px rgba(139, 92, 246, 0.4);
+    }
+}
+
+.ai-pulse-btn {
+    animation: aiGlow 2.5s infinite ease-in-out;
+}
+
+/* Tab active indicator */
+.nav-tab.active {
+    background: rgba(37, 99, 235, 0.18);
+    color: #60a5fa;
+    border-bottom: 2px solid #3b82f6;
+}
+
+/* Range input customization */
+input[type=range] {
+    accent-color: #3b82f6;
+}
+
+/* Form input styling */
+.form-input-custom {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    transition: all 0.2s ease;
+}
+
+.form-input-custom:focus {
+    border-color: #3b82f6;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+/* Probability comparison bar */
+.prob-bar-container {
+    height: 12px;
+    background: #1e293b;
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+}
+
+.prob-bar-approved {
+    background: linear-gradient(90deg, #10b981, #059669);
+    transition: width 1s ease-in-out;
+}
+
+.prob-bar-rejected {
+    background: linear-gradient(90deg, #dc2626, #ef4444);
+    transition: width 1s ease-in-out;
+}
+
+/* Table styles */
+.cpt-table th, .cpt-table td {
+    border: 1px solid #334155;
+    padding: 6px 10px;
+    text-align: center;
+    font-size: 0.82rem;
+}
+
+.cpt-table th {
+    background-color: #1e293b;
+    color: #93c5fd;
+}
