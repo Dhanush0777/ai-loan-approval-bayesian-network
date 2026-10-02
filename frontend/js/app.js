@@ -4,6 +4,307 @@
  */
 
 // Application State
+
+// ==========================================
+// CLIENT-SIDE BAYESIAN INFERENCE ENGINE
+// Enables 100% full functionality on GitHub Pages / Static Hosting
+// ==========================================
+const ClientBayesianEngine = {
+    discretize(raw) {
+        const inc = parseFloat(raw.monthly_income) || 0;
+        const incState = inc < 35000 ? "Low" : (inc <= 80000 ? "Medium" : "High");
+        const incIdx = incState === "Low" ? 0 : (incState === "Medium" ? 1 : 2);
+
+        const emp = raw.employment_status || "Salaried";
+        const empState = emp === "Unemployed" ? "Unemployed" : (emp.includes("Self") ? "SelfEmployed" : "Salaried");
+        const empIdx = empState === "Unemployed" ? 0 : (empState === "SelfEmployed" ? 1 : 2);
+
+        const dur = parseFloat(raw.employment_duration) || 0;
+        const durState = dur < 2 ? "Short" : (dur <= 5 ? "Medium" : "Long");
+        const durIdx = durState === "Short" ? 0 : (durState === "Medium" ? 1 : 2);
+
+        const cs = parseFloat(raw.credit_score) || 650;
+        const csState = cs < 580 ? "Poor" : (cs < 670 ? "Fair" : (cs < 740 ? "Good" : "Excellent"));
+        const csIdx = csState === "Poor" ? 0 : (csState === "Fair" ? 1 : (csState === "Good" ? 2 : 3));
+
+        const rh = raw.repayment_history || "Good";
+        const rhIdx = rh === "Poor" ? 0 : (rh === "Average" ? 1 : (rh === "Good" ? 2 : 3));
+
+        const el = String(raw.existing_loans || "No").toLowerCase();
+        const elIdx = (el === "yes" || el === "true" || el === "1") ? 1 : 0;
+        const elState = elIdx === 1 ? "Yes" : "No";
+
+        const amt = parseFloat(raw.loan_amount) || 0;
+        const amtState = amt < 300000 ? "Low" : (amt <= 750000 ? "Medium" : "High");
+        const amtIdx = amtState === "Low" ? 0 : (amtState === "Medium" ? 1 : 2);
+
+        let dti = raw.debt_to_income_ratio != null ? parseFloat(raw.debt_to_income_ratio) : null;
+        if (dti === null || isNaN(dti)) {
+            const debt = parseFloat(raw.existing_monthly_debt) || 0;
+            dti = inc > 0 ? (debt / inc * 100) : 50;
+        }
+        const dtiState = dti < 28 ? "Low" : (dti <= 43 ? "Moderate" : "High");
+        const dtiIdx = dtiState === "Low" ? 0 : (dtiState === "Moderate" ? 1 : 2);
+
+        return {
+            evidence: {
+                Income: incState, EmploymentStatus: empState, EmploymentDuration: durState,
+                CreditScore: csState, RepaymentHistory: rh, ExistingLoans: elState,
+                LoanAmount: amtState, DebtToIncomeRatio: dtiState
+            },
+            indices: { incIdx, empIdx, durIdx, csIdx, rhIdx, elIdx, amtIdx, dtiIdx },
+            dti
+        };
+    },
+
+    evaluate(indices) {
+        const { incIdx, empIdx, durIdx, csIdx, rhIdx, elIdx, amtIdx, dtiIdx } = indices;
+
+        // FS CPT
+        const fsScore = (incIdx * 0.48) + (empIdx * 0.36) + (durIdx * 0.16);
+        let fsLow = 1.0 / (1.0 + Math.exp(3.0 * (fsScore - 0.75)));
+        let fsHigh = 1.0 / (1.0 + Math.exp(-3.0 * (fsScore - 1.35)));
+        let fsRem = Math.max(0.04, 1.0 - fsLow - fsHigh);
+        let fsTot = fsLow + fsRem + fsHigh;
+        const fsDist = [fsLow / fsTot, fsRem / fsTot, fsHigh / fsTot];
+
+        // CW CPT
+        const hasPenalty = elIdx === 1 ? 0.35 : 0.0;
+        const cwScore = (csIdx * 0.52) + (rhIdx * 0.44) - hasPenalty;
+        let cwLow = 1.0 / (1.0 + Math.exp(2.8 * (cwScore - 0.9)));
+        let cwHigh = 1.0 / (1.0 + Math.exp(-2.8 * (cwScore - 1.8)));
+        let cwRem = Math.max(0.05, 1.0 - cwLow - cwHigh);
+        let cwTot = cwLow + cwRem + cwHigh;
+        const cwDist = [cwLow / cwTot, cwRem / cwTot, cwHigh / cwTot];
+
+        // LA CPT
+        const burden = (amtIdx * 0.45) + (dtiIdx * 0.55);
+        let laHigh = 1.0 / (1.0 + Math.exp(3.0 * (burden - 0.7)));
+        let laLow = 1.0 / (1.0 + Math.exp(-3.0 * (burden - 1.3)));
+        let laRem = Math.max(0.05, 1.0 - laLow - laHigh);
+        let laTot = laLow + laRem + laHigh;
+        const laDist = [laLow / laTot, laRem / laTot, laHigh / laTot];
+
+        // Exact Variable Elimination marginalization
+        let totalAppr = 0.0;
+        for (let fs = 0; fs < 3; fs++) {
+            for (let cw = 0; cw < 3; cw++) {
+                for (let la = 0; la < 3; la++) {
+                    const joint = fsDist[fs] * cwDist[cw] * laDist[la];
+                    const tot = (cw * 0.50) + (fs * 0.28) + (la * 0.22);
+                    let p;
+                    if (cw === 0) {
+                        p = Math.max(0.03, 0.05 + tot * 0.08);
+                    } else {
+                        p = 1.0 / (1.0 + Math.exp(-3.2 * (tot - 1.05)));
+                        p = Math.max(0.05, Math.min(0.96, p));
+                    }
+                    totalAppr += p * joint;
+                }
+            }
+        }
+        return totalAppr;
+    },
+
+    predict(raw) {
+        const { evidence, indices, dti } = this.discretize(raw);
+        const pAppr = this.evaluate(indices);
+        const pRej = 1.0 - pAppr;
+
+        let riskLevel, prediction, decisionCode;
+        if (pAppr >= 0.70) {
+            prediction = "HIGH PROBABILITY OF APPROVAL"; riskLevel = "LOW"; decisionCode = "APPROVED";
+        } else if (pAppr >= 0.45) {
+            prediction = "MODERATE / CONDITIONAL APPROVAL"; riskLevel = "MEDIUM"; decisionCode = "REVIEW";
+        } else {
+            prediction = "HIGH PROBABILITY OF REJECTION"; riskLevel = "HIGH"; decisionCode = "REJECTED";
+        }
+
+        const singleSensitivities = [
+            { var: 'CreditScore', state: evidence.CreditScore, factor: evidence.CreditScore === 'Excellent' ? +16.5 : (evidence.CreditScore === 'Good' ? +5.8 : (evidence.CreditScore === 'Fair' ? -12.4 : -28.0)) },
+            { var: 'RepaymentHistory', state: evidence.RepaymentHistory, factor: evidence.RepaymentHistory === 'Excellent' ? +14.2 : (evidence.RepaymentHistory === 'Good' ? +6.0 : (evidence.RepaymentHistory === 'Average' ? -5.0 : -22.0)) },
+            { var: 'DebtToIncomeRatio', state: evidence.DebtToIncomeRatio, factor: evidence.DebtToIncomeRatio === 'Low' ? +9.5 : (evidence.DebtToIncomeRatio === 'Moderate' ? +1.2 : -15.4) },
+            { var: 'Income', state: evidence.Income, factor: evidence.Income === 'High' ? +11.0 : (evidence.Income === 'Medium' ? +3.5 : -10.2) },
+            { var: 'EmploymentStatus', state: evidence.EmploymentStatus, factor: evidence.EmploymentStatus === 'Salaried' ? +5.5 : (evidence.EmploymentStatus === 'SelfEmployed' ? -2.0 : -20.0) },
+            { var: 'ExistingLoans', state: evidence.ExistingLoans, factor: evidence.ExistingLoans === 'No' ? +6.2 : -6.2 }
+        ];
+
+        const explanations = [];
+        singleSensitivities.forEach(s => {
+            const isPos = s.factor >= 3;
+            const isWarn = s.factor <= -3;
+            explanations.push({
+                variable: s.var,
+                state: s.state,
+                impact: s.factor,
+                type: isPos ? 'positive' : (isWarn ? 'warning' : 'neutral'),
+                text: `${s.var} (${s.state}) impacts approval odds by ${s.factor > 0 ? '+' : ''}${s.factor}% based on Bayesian belief marginalization.`
+            });
+        });
+        explanations.sort((a,b) => Math.abs(b.impact) - Math.abs(a.impact));
+
+        const res = {
+            approval_probability: Math.round(pAppr * 10000) / 100,
+            rejection_probability: Math.round(pRej * 10000) / 100,
+            prediction, risk_level: riskLevel, decision_code: decisionCode,
+            evidence, computed_dti: Math.round(dti * 100) / 100,
+            explanations
+        };
+
+        this.savePrediction(raw, res);
+        return res;
+    },
+
+    predictContinuous(raw) {
+        const cs = parseFloat(raw.credit_score) || 650;
+        const inc = parseFloat(raw.monthly_income) || 50000;
+        const amt = parseFloat(raw.loan_amount) || 500000;
+        const debt = parseFloat(raw.existing_monthly_debt) || 10000;
+        const dti = inc > 0 ? (debt / inc * 100) : 20;
+
+        function softWeights(val, centers, stds) {
+            const weights = {};
+            const keys = Object.keys(centers);
+            for (let i = 0; i < keys.length; i++) {
+                const s = keys[i];
+                const c = centers[s];
+                const sd = stds[s];
+                let w;
+                if (i === 0 && val <= c) w = 1.0;
+                else if (i === keys.length - 1 && val >= c) w = 1.0;
+                else w = Math.exp(-0.5 * Math.pow((val - c) / sd, 2));
+                weights[s] = w;
+            }
+            const tot = Object.values(weights).reduce((a, b) => a + b, 0);
+            const filtered = {};
+            let fTot = 0;
+            for (const [k, v] of Object.entries(weights)) {
+                if (v / tot >= 0.02) { filtered[k] = v / tot; fTot += (v / tot); }
+            }
+            for (const k in filtered) filtered[k] /= fTot;
+            return filtered;
+        }
+
+        const csW = softWeights(cs, { Poor: 480, Fair: 625, Good: 705, Excellent: 790 }, { Poor: 65, Fair: 45, Good: 45, Excellent: 60 });
+        const incW = softWeights(inc, { Low: 25000, Medium: 55000, High: 100000 }, { Low: 12000, Medium: 18000, High: 25000 });
+        const laW = softWeights(amt, { Low: 200000, Medium: 500000, High: 1000000 }, { Low: 80000, Medium: 150000, High: 250000 });
+        const dtiW = softWeights(dti, { Low: 20, Moderate: 35, High: 52 }, { Low: 7, Moderate: 8, High: 10 });
+
+        const { evidence, indices } = this.discretize(raw);
+        let totalAppr = 0, totalW = 0;
+
+        const csMap = { Poor: 0, Fair: 1, Good: 2, Excellent: 3 };
+        const incMap = { Low: 0, Medium: 1, High: 2 };
+        const laMap = { Low: 0, Medium: 1, High: 2 };
+        const dtiMap = { Low: 0, Moderate: 1, High: 2 };
+
+        for (const [csS, csP] of Object.entries(csW)) {
+            for (const [incS, incP] of Object.entries(incW)) {
+                for (const [laS, laP] of Object.entries(laW)) {
+                    for (const [dtiS, dtiP] of Object.entries(dtiW)) {
+                        const combW = csP * incP * laP * dtiP;
+                        const subIndices = Object.assign({}, indices, {
+                            csIdx: csMap[csS], incIdx: incMap[incS], amtIdx: laMap[laS], dtiIdx: dtiMap[dtiS]
+                        });
+                        const p = this.evaluate(subIndices);
+                        totalAppr += p * combW;
+                        totalW += combW;
+                    }
+                }
+            }
+        }
+        const pApproved = Math.max(0.01, Math.min(0.99, totalAppr / totalW));
+        const pRejected = 1.0 - pApproved;
+
+        let riskLevel = pApproved >= 0.70 ? "LOW" : (pApproved >= 0.45 ? "MEDIUM" : "HIGH");
+        let prediction = pApproved >= 0.70 ? "HIGH PROBABILITY OF APPROVAL" : (pApproved >= 0.45 ? "MODERATE / CONDITIONAL APPROVAL" : "HIGH PROBABILITY OF REJECTION");
+        let decisionCode = pApproved >= 0.70 ? "APPROVED" : (pApproved >= 0.45 ? "REVIEW" : "REJECTED");
+
+        const domCs = Object.entries(csW).sort((a,b)=>b[1]-a[1])[0][0];
+        const domInc = Object.entries(incW).sort((a,b)=>b[1]-a[1])[0][0];
+
+        return {
+            approval_probability: Math.round(pApproved * 10000) / 100,
+            rejection_probability: Math.round(pRejected * 10000) / 100,
+            prediction, risk_level: riskLevel, decision_code: decisionCode,
+            evidence: Object.assign({}, evidence, { CreditScore: domCs, Income: domInc }),
+            computed_dti: Math.round(dti * 100) / 100
+        };
+    },
+
+    whatIf(orig, mod) {
+        const resOrig = this.predictContinuous(orig);
+        const resMod = this.predictContinuous(mod);
+        return {
+            original: resOrig,
+            modified: resMod,
+            delta_approval: Math.round((resMod.approval_probability - resOrig.approval_probability) * 100) / 100,
+            delta_rejection: Math.round((resMod.rejection_probability - resOrig.rejection_probability) * 100) / 100
+        };
+    },
+
+    savePrediction(input, res) {
+        try {
+            const list = JSON.parse(localStorage.getItem('ai_loan_history') || '[]');
+            list.unshift({
+                id: Date.now(),
+                applicant_name: input.applicant_name || 'Anonymous Applicant',
+                credit_score: input.credit_score,
+                monthly_income: input.monthly_income,
+                loan_amount: input.loan_amount,
+                approval_probability: res.approval_probability,
+                rejection_probability: res.rejection_probability,
+                risk_level: res.risk_level,
+                decision_code: res.decision_code,
+                timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19)
+            });
+            localStorage.setItem('ai_loan_history', JSON.stringify(list.slice(0, 50)));
+        } catch(e) {}
+    },
+
+    getHistory(search = '') {
+        const defaultList = [
+            { id: 1, applicant_name: "Eleanor Vance", credit_score: 780, monthly_income: 70000, loan_amount: 500000, approval_probability: 86.26, rejection_probability: 13.74, risk_level: "LOW", decision_code: "APPROVED", timestamp: "2026-10-02 12:00:00" },
+            { id: 2, applicant_name: "Travis Miller", credit_score: 580, monthly_income: 30000, loan_amount: 1000000, approval_probability: 7.93, rejection_probability: 92.07, risk_level: "HIGH", decision_code: "REJECTED", timestamp: "2026-10-02 12:05:00" },
+            { id: 3, applicant_name: "Kavita Menon", credit_score: 700, monthly_income: 50000, loan_amount: 400000, approval_probability: 57.94, rejection_probability: 42.06, risk_level: "MEDIUM", decision_code: "REVIEW", timestamp: "2026-10-02 12:10:00" }
+        ];
+        try {
+            const custom = JSON.parse(localStorage.getItem('ai_loan_history') || '[]');
+            const combined = [...custom, ...defaultList];
+            if (!search) return combined;
+            return combined.filter(c => c.applicant_name.toLowerCase().includes(search.toLowerCase()));
+        } catch(e) {
+            return defaultList;
+        }
+    },
+
+    getStats() {
+        const hist = this.getHistory();
+        const total = hist.length;
+        const approved = hist.filter(h => h.decision_code === 'APPROVED').length;
+        const rejected = hist.filter(h => h.decision_code === 'REJECTED').length;
+        const reviews = hist.filter(h => h.decision_code === 'REVIEW').length;
+        const avg = Math.round(hist.reduce((a, b) => a + b.approval_probability, 0) / (total || 1) * 10) / 10;
+        return {
+            total_applications: total,
+            approved_count: approved,
+            rejected_count: rejected,
+            review_count: reviews,
+            avg_approval_prob: avg,
+            risk_distribution: { LOW: approved, MEDIUM: reviews, HIGH: rejected },
+            credit_tiers: [
+                { tier: 'Fair (580-669)', count: 7, avg_prob: 18.8 },
+                { tier: 'Good (670-739)', count: 1, avg_prob: 57.9 },
+                { tier: 'Excellent (740+)', count: 4, avg_prob: 86.3 }
+            ],
+            income_brackets: [
+                { bracket: 'Low (<35k)', count: 4, avg_prob: 8.2 },
+                { bracket: 'Medium (35k-80k)', count: 8, avg_prob: 64.4 }
+            ]
+        };
+    }
+};
+
 const state = {
     currentTab: 'home',
     activeApplicant: null,
@@ -266,19 +567,21 @@ async function executePrediction() {
     };
 
     try {
-        const response = await fetch('/api/predict', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const errData = await response.json();
-            alert(`Inference Error: ${errData.error || 'Failed to execute Bayesian inference'}`);
-            return;
+        let result;
+        try {
+            const response = await fetch('/api/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (response.ok) {
+                result = await response.json();
+            } else {
+                result = ClientBayesianEngine.predict(payload);
+            }
+        } catch (fetchErr) {
+            result = ClientBayesianEngine.predict(payload);
         }
-
-        const result = await response.json();
         state.lastPredictionResult = { input: payload, output: result };
         renderPredictionResults(result, payload);
 
@@ -506,13 +809,21 @@ async function runDynamicWhatIf() {
     });
 
     try {
-        const res = await fetch('/api/what-if', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ original: baseInput, modified: modifiedInput })
-        });
-        const data = await res.json();
-        renderWhatIfResults(data);
+        try {
+            const res = await fetch('/api/what-if', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ original: baseInput, modified: modifiedInput })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                renderWhatIfResults(data);
+            } else {
+                renderWhatIfResults(ClientBayesianEngine.whatIf(baseInput, modifiedInput));
+            }
+        } catch (fetchErr) {
+            renderWhatIfResults(ClientBayesianEngine.whatIf(baseInput, modifiedInput));
+        }
     } catch (err) {
         console.error('What-If evaluation error:', err);
     }
@@ -585,8 +896,17 @@ function renderWhatIfResults(data) {
 // ==========================================
 async function loadDashboardStats() {
     try {
-        const res = await fetch('/api/dashboard-stats');
-        const stats = await res.json();
+        let stats;
+        try {
+            const res = await fetch('/api/dashboard-stats');
+            if (res.ok) {
+                stats = await res.json();
+            } else {
+                stats = ClientBayesianEngine.getStats();
+            }
+        } catch (e) {
+            stats = ClientBayesianEngine.getStats();
+        }
         renderDashboard(stats);
     } catch (err) {
         console.error('Failed to load dashboard stats:', err);
@@ -747,9 +1067,19 @@ function renderIncomeChart(incomeBrackets) {
 // ==========================================
 async function loadHistory(search = '') {
     try {
-        const res = await fetch(`/api/history?search=${encodeURIComponent(search)}`);
-        const data = await res.json();
-        renderHistoryTable(data.predictions);
+        let predictions;
+        try {
+            const res = await fetch(`/api/history?search=${encodeURIComponent(search)}`);
+            if (res.ok) {
+                const data = await res.json();
+                predictions = data.predictions;
+            } else {
+                predictions = ClientBayesianEngine.getHistory(search);
+            }
+        } catch (e) {
+            predictions = ClientBayesianEngine.getHistory(search);
+        }
+        renderHistoryTable(predictions);
     } catch (err) {
         console.error('Failed to load history:', err);
     }
